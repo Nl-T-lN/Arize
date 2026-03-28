@@ -147,7 +147,7 @@ fun buildExerciseCatalog(): List<Exercise> {
             preparation = listOf("Sit upright and brace core", "Start dumbbells at shoulder level"),
             execution = listOf("Press overhead without shrugging", "Lower under control"),
             keyTips = listOf("Keep wrists stacked", "Avoid excessive lower-back arch"),
-            videoUrl = "https://www.youtube.com/results?search_query=dumbbell+shoulder+press+form",
+            videoUrl = "android.resource://com.example.arize/raw/shoulder_press",
             sourceUrl = "https://en.wikipedia.org/wiki/Overhead_press"
         ),
         Exercise(
@@ -161,7 +161,7 @@ fun buildExerciseCatalog(): List<Exercise> {
             preparation = listOf("Stand tall with slight elbow bend", "Keep dumbbells by sides"),
             execution = listOf("Raise to shoulder height", "Lower slowly to start"),
             keyTips = listOf("Do not swing weight", "Lead with elbows, not hands"),
-            videoUrl = "https://www.youtube.com/results?search_query=lateral+raise+form",
+            videoUrl = "android.resource://com.example.arize/raw/lateral_raise",
             sourceUrl = "https://en.wikipedia.org/wiki/Lateral_raise"
         ),
         Exercise(
@@ -175,7 +175,7 @@ fun buildExerciseCatalog(): List<Exercise> {
             preparation = listOf("Stand with elbows near torso", "Use shoulder-width grip"),
             execution = listOf("Curl bar toward shoulders", "Lower until arms are nearly straight"),
             keyTips = listOf("Keep upper arms fixed", "Avoid leaning back"),
-            videoUrl = "https://www.youtube.com/watch?v=YK0fQhM7j2k",
+            videoUrl = "android.resource://com.example.arize/raw/barbell_curl",
             sourceUrl = "https://en.wikipedia.org/wiki/Biceps_curl"
         ),
         Exercise(
@@ -189,7 +189,7 @@ fun buildExerciseCatalog(): List<Exercise> {
             preparation = listOf("Grip rope with elbows tucked", "Lean slightly forward"),
             execution = listOf("Extend elbows fully", "Return slowly until forearms are parallel"),
             keyTips = listOf("Keep elbows close to ribs", "Control both phases"),
-            videoUrl = "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+            videoUrl = "android.resource://com.example.arize/raw/tricep_pushdown",
             sourceUrl = "https://en.wikipedia.org/wiki/Triceps_extension"
         ),
         Exercise(

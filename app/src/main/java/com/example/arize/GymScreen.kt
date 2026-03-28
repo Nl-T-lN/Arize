@@ -146,6 +146,7 @@ fun GymPage(
     if (activeCoachExercise != null) {
         LiveWorkoutCoachFullscreen(
             exercise = activeCoachExercise!!,
+            modifier = modifier,
             onBack = { activeCoachExercise = null },
             onTargetComplete = {
                 val title = activeCoachExercise!!.title
@@ -367,8 +368,7 @@ private fun ExerciseDetailsSheet(
         }
 
         item {
-            // Passes the exercise name to generate a dynamic YouTube search
-            ExerciseVideoPlayer(exerciseName = exercise.title)
+            ExerciseVideoPlayer(videoUrl = exercise.videoUrl)
         }
 
         item {
@@ -419,38 +419,53 @@ private fun ExerciseDetailsSheet(
 }
 
 @Composable
-private fun ExerciseVideoPlayer(exerciseName: String) {
+private fun ExerciseVideoPlayer(videoUrl: String) {
     val context = LocalContext.current
 
-    // Constructs a direct search query to YouTube Mobile for the specific exercise.
-    // This bypasses iframe restrictions and gives the user immediate visual results.
-    val searchQuery = Uri.encode("$exerciseName exercise form tutorial")
-    val searchUrl = "https://m.youtube.com/results?search_query=$searchQuery"
+    if (videoUrl.startsWith("android.resource://")) {
+        AndroidView(
+            factory = {
+                android.widget.VideoView(context).apply {
+                    setVideoURI(Uri.parse(videoUrl))
+                    setOnPreparedListener { mp ->
+                        mp.isLooping = true
+                        start()
+                    }
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(280.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color.Black)
+        )
+    } else {
+        AndroidView(
+            factory = {
+                WebView(context).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true // Crucial for modern YouTube mobile layout
+                    settings.mediaPlaybackRequiresUserGesture = false
 
-    AndroidView(
-        factory = {
-            WebView(context).apply {
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true // Crucial for modern YouTube mobile layout
-                settings.mediaPlaybackRequiresUserGesture = false
+                    // Keep navigation contained within the WebView itself
+                    webViewClient = WebViewClient()
 
-                // Keep navigation contained within the WebView itself
-                webViewClient = WebViewClient()
-
-                loadUrl(searchUrl)
-            }
-        },
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(280.dp) // Taller height to comfortably view search results
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color.Black)
-    )
+                    loadUrl(videoUrl)
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(280.dp) // Taller height to comfortably view search results
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color.Black)
+        )
+    }
 }
 
 @Composable
 private fun LiveWorkoutCoachFullscreen(
     exercise: Exercise,
+    modifier: Modifier = Modifier,
     onBack: () -> Unit,
     onTargetComplete: () -> Unit,
 ) {
@@ -508,7 +523,7 @@ private fun LiveWorkoutCoachFullscreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
         if (hasPermission) {
             AndroidView(
                 factory = {
