@@ -37,6 +37,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -59,6 +60,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import com.google.ai.client.generativeai.GenerativeModel
@@ -70,6 +72,13 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.Calendar
+
+// Standard default daily goals (You can later connect this to UserProfile)
+private const val GOAL_CALORIES = 2000
+private const val GOAL_PROTEIN = 150.0
+private const val GOAL_CARBS = 250.0
+private const val GOAL_FATS = 70.0
 
 data class FoodAnalysisResult(
     val itemName: String,
@@ -79,6 +88,8 @@ data class FoodAnalysisResult(
     val carbs: String,
     val fiber: String,
     val score: Int,
+    val shouldEat: Boolean,
+    val recommendation: String
 )
 
 private data class LoggedMeal(
@@ -93,6 +104,20 @@ private data class PendingMeal(
 )
 
 private const val KEY_FOOD_HISTORY = "food_history_json"
+
+// Helper to extract numbers from "15.5g" strings
+private fun String.extractMacro(): Double {
+    return this.replace(Regex("[^0-9.]"), "").toDoubleOrNull() ?: 0.0
+}
+
+// Helper to check if a meal was logged today
+private fun isToday(timestamp: Long): Boolean {
+    val calendar = Calendar.getInstance()
+    val todayYear = calendar.get(Calendar.YEAR)
+    val todayDay = calendar.get(Calendar.DAY_OF_YEAR)
+    calendar.timeInMillis = timestamp
+    return calendar.get(Calendar.YEAR) == todayYear && calendar.get(Calendar.DAY_OF_YEAR) == todayDay
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -118,6 +143,18 @@ fun FoodPage(profile: UserProfile, modifier: Modifier = Modifier) {
     var selectedMeal by remember { mutableStateOf<LoggedMeal?>(null) }
     val runtimeApiKey = if (profile.geminiApiKey.isNotBlank()) profile.geminiApiKey else BuildConfig.GEMINI_API_KEY
 
+    // Calculate Today's Totals
+    val todayMeals = loggedMeals.filter { isToday(it.id) }
+    val consumedCalories = todayMeals.sumOf { it.result.calories }
+    val consumedProtein = todayMeals.sumOf { it.result.protein.extractMacro() }
+    val consumedCarbs = todayMeals.sumOf { it.result.carbs.extractMacro() }
+    val consumedFats = todayMeals.sumOf { it.result.fat.extractMacro() }
+
+    val remainingCals = (GOAL_CALORIES - consumedCalories).coerceAtLeast(0)
+    val remainingProtein = (GOAL_PROTEIN - consumedProtein).coerceAtLeast(0.0)
+    val remainingCarbs = (GOAL_CARBS - consumedCarbs).coerceAtLeast(0.0)
+    val remainingFats = (GOAL_FATS - consumedFats).coerceAtLeast(0.0)
+
     fun runGemini(bitmap: Bitmap) {
         if (runtimeApiKey.isBlank()) {
             analysisError = "API key missing. Add GEMINI_API_KEY in local.properties or Profile."
@@ -129,7 +166,15 @@ fun FoodPage(profile: UserProfile, modifier: Modifier = Modifier) {
         isAnalyzing = true
 
         coroutineScope.launch {
-            val result = analyzeFoodBitmapWithGeminiSdk(runtimeApiKey, bitmap, profile)
+            val result = analyzeFoodBitmapWithGeminiSdk(
+                apiKey = runtimeApiKey,
+                bitmap = bitmap,
+                profile = profile,
+                remCals = remainingCals,
+                remPro = remainingProtein,
+                remCarbs = remainingCarbs,
+                remFat = remainingFats
+            )
             isAnalyzing = false
             loadingPhoto = null
             result.onSuccess { data ->
@@ -163,11 +208,55 @@ fun FoodPage(profile: UserProfile, modifier: Modifier = Modifier) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+
+            // --- NEW: Daily Nutrition Plan Dashboard ---
             item {
-                Text("Food Scan", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Text("Capture or upload a photo to analyze.", color = MutedText, modifier = Modifier.padding(top = 4.dp))
+                Text("Daily Nutrition Plan", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text("Your macro targets for today", color = MutedText, modifier = Modifier.padding(top = 4.dp, bottom = 8.dp))
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = CardDark),
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        // Calories
+                        val calProgress = (consumedCalories.toFloat() / GOAL_CALORIES).coerceIn(0f, 1f)
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Calories", color = Color.White, fontWeight = FontWeight.Bold)
+                                Text("$consumedCalories / $GOAL_CALORIES kcal", color = MutedText)
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            LinearProgressIndicator(
+                                progress = calProgress,
+                                modifier = Modifier.fillMaxWidth().height(12.dp).clip(RoundedCornerShape(6.dp)),
+                                color = AccentBlue,
+                                trackColor = Color(0xFF2A3142)
+                            )
+                        }
+
+                        // Macros
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                MacroProgressBar("Protein", consumedProtein, GOAL_PROTEIN, Color(0xFF60A5FA)) // Blue
+                            }
+                            Box(modifier = Modifier.weight(1f)) {
+                                MacroProgressBar("Carbs", consumedCarbs, GOAL_CARBS, Color(0xFF34D399)) // Green
+                            }
+                            Box(modifier = Modifier.weight(1f)) {
+                                MacroProgressBar("Fats", consumedFats, GOAL_FATS, Color(0xFFFBBF24)) // Yellow
+                            }
+                        }
+                    }
+                }
+            }
+            // -------------------------------------------
+
+            item {
+                Text("Food Scan", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             }
 
             item {
@@ -303,7 +392,7 @@ fun FoodPage(profile: UserProfile, modifier: Modifier = Modifier) {
                                     .clip(RoundedCornerShape(12.dp))
                             )
                             CircularProgressIndicator(color = AccentBlue)
-                            Text("Analyzing...", color = Color.White)
+                            Text("Analyzing limits and macros...", color = Color.White)
                         }
                     }
                 }
@@ -324,6 +413,24 @@ fun FoodPage(profile: UserProfile, modifier: Modifier = Modifier) {
 }
 
 @Composable
+fun MacroProgressBar(label: String, consumed: Double, goal: Double, color: Color) {
+    val progress = (consumed / goal).toFloat().coerceIn(0f, 1f)
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, color = Color.White, fontSize = 12.sp)
+            Text("${consumed.toInt()}/${goal.toInt()}g", color = MutedText, fontSize = 11.sp)
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        LinearProgressIndicator(
+            progress = progress,
+            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+            color = color,
+            trackColor = Color(0xFF2A3142)
+        )
+    }
+}
+
+@Composable
 private fun PendingReportCard(
     pending: PendingMeal,
     onSave: () -> Unit,
@@ -335,7 +442,7 @@ private fun PendingReportCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Gemini Report", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("AI Dietitian Report", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             androidx.compose.foundation.Image(
                 bitmap = pending.photo.asImageBitmap(),
                 contentDescription = pending.result.itemName,
@@ -355,7 +462,7 @@ private fun PendingReportCard(
                 Button(onClick = onSave, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Default.Save, contentDescription = null)
                     Spacer(modifier = Modifier.size(6.dp))
-                    Text("Save Report")
+                    Text("Save Log")
                 }
             }
         }
@@ -439,7 +546,19 @@ private fun ReportFacts(result: FoodAnalysisResult) {
             Text("Calories: ${result.calories} kcal", color = Color(0xFFD1D5DB))
             Text("Protein: ${result.protein}  Fat: ${result.fat}", color = Color(0xFFD1D5DB))
             Text("Carbs: ${result.carbs}  Fiber: ${result.fiber}", color = Color(0xFFD1D5DB))
-            Text("Nutrition Score: ${result.score}/10", color = Color(0xFF93C5FD), fontWeight = FontWeight.SemiBold)
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Display the AI Recommendation
+            if (result.recommendation.isNotBlank()) {
+                val statusColor = if (result.shouldEat) Color(0xFF86EFAC) else Color(0xFFFCA5A5)
+                val statusText = if (result.shouldEat) "✓ Fits Your Macros" else "✗ Exceeds Remaining Goals"
+
+                Text(statusText, color = statusColor, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(result.recommendation, color = Color(0xFF9CA3AF), style = MaterialTheme.typography.bodyMedium)
+            }
+
+            Text("Overall Nutrition Score: ${result.score}/10", color = Color(0xFF93C5FD), fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp))
         }
     }
 }
@@ -448,10 +567,14 @@ private suspend fun analyzeFoodBitmapWithGeminiSdk(
     apiKey: String,
     bitmap: Bitmap,
     profile: UserProfile,
+    remCals: Int,
+    remPro: Double,
+    remCarbs: Double,
+    remFat: Double
 ): Result<FoodAnalysisResult> {
     return withContext(Dispatchers.IO) {
         runCatching {
-            val responseText = analyzeObject(bitmap, apiKey, profile)
+            val responseText = analyzeObject(bitmap, apiKey, profile, remCals, remPro, remCarbs, remFat)
                 ?: throw IllegalStateException("Gemini returned empty response")
 
             parseGeminiNutritionResponse(responseText)
@@ -460,7 +583,15 @@ private suspend fun analyzeFoodBitmapWithGeminiSdk(
     }
 }
 
-private suspend fun analyzeObject(bitmap: Bitmap, apiKey: String, profile: UserProfile): String? {
+private suspend fun analyzeObject(
+    bitmap: Bitmap,
+    apiKey: String,
+    profile: UserProfile,
+    remCals: Int,
+    remPro: Double,
+    remCarbs: Double,
+    remFat: Double
+): String? {
     val prompt = """
 Identify the primary food in this image. Return ONLY valid JSON.
 Schema:
@@ -471,12 +602,23 @@ Schema:
   "carbs": number,
   "fats": number,
   "fiber": number,
-  "score": number
+  "score": number,
+  "shouldEat": boolean,
+  "recommendation": string
 }
 Rules:
 - Use nutrition for a realistic single serving seen in photo.
 - If branded package text is visible, prefer package nutrition values.
-- Keep score in 1..10.
+- Keep score in 1..10 based on general healthiness.
+- "shouldEat": Analyze the remaining daily targets below. Return true if this serving reasonably fits into their remaining goals without heavily exceeding them, false otherwise.
+- "recommendation": Give a short 1-2 sentence tailored explanation to the user on why they should or should not eat this based strictly on their remaining targets below.
+
+User's REMAINING Daily Targets:
+Calories left: $remCals kcal
+Protein left: ${remPro}g
+Carbs left: ${remCarbs}g
+Fats left: ${remFat}g
+
 Fitness context:
 ${buildFitnessContext(profile)}
 """.trimIndent()
@@ -515,6 +657,8 @@ private fun parseGeminiNutritionResponse(responseText: String): FoodAnalysisResu
     val fats = strictJson.optDouble("fats", strictJson.optDouble("fat", 4.0)).coerceIn(0.0, 120.0)
     val fiber = strictJson.optDouble("fiber", 2.0).coerceIn(0.0, 80.0)
     val score = strictJson.optInt("score", 5).coerceIn(1, 10)
+    val shouldEat = strictJson.optBoolean("shouldEat", true)
+    val recommendation = strictJson.optString("recommendation", "Fits reasonably well into a standard diet.")
 
     return FoodAnalysisResult(
         itemName = food,
@@ -523,7 +667,9 @@ private fun parseGeminiNutritionResponse(responseText: String): FoodAnalysisResu
         fat = "${fats.format1()}g",
         carbs = "${carbs.format1()}g",
         fiber = "${fiber.format1()}g",
-        score = score
+        score = score,
+        shouldEat = shouldEat,
+        recommendation = recommendation
     )
 }
 
@@ -573,6 +719,8 @@ private fun saveFoodHistory(prefs: android.content.SharedPreferences, meals: Lis
                 .put("carbs", meal.result.carbs)
                 .put("fiber", meal.result.fiber)
                 .put("score", meal.result.score)
+                .put("shouldEat", meal.result.shouldEat)
+                .put("recommendation", meal.result.recommendation)
         )
     }
     prefs.edit().putString(KEY_FOOD_HISTORY, array.toString()).apply()
@@ -598,7 +746,9 @@ private fun loadFoodHistory(prefs: android.content.SharedPreferences): List<Logg
                             fat = obj.optString("fat", "4.0g"),
                             carbs = obj.optString("carbs", "16.0g"),
                             fiber = obj.optString("fiber", "2.0g"),
-                            score = obj.optInt("score", 5).coerceIn(1, 10)
+                            score = obj.optInt("score", 5).coerceIn(1, 10),
+                            shouldEat = obj.optBoolean("shouldEat", true),
+                            recommendation = obj.optString("recommendation", "")
                         )
                     )
                 )

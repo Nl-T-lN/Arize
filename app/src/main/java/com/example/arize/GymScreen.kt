@@ -7,8 +7,6 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.MediaController
-import android.widget.VideoView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
@@ -369,7 +367,8 @@ private fun ExerciseDetailsSheet(
         }
 
         item {
-            ExerciseVideoPlayer(videoUrl = exercise.videoUrl)
+            // Passes the exercise name to generate a dynamic YouTube search
+            ExerciseVideoPlayer(exerciseName = exercise.title)
         }
 
         item {
@@ -420,69 +419,33 @@ private fun ExerciseDetailsSheet(
 }
 
 @Composable
-private fun ExerciseVideoPlayer(videoUrl: String) {
+private fun ExerciseVideoPlayer(exerciseName: String) {
     val context = LocalContext.current
-    val videoId = extractYouTubeVideoId(videoUrl)
 
-    if (videoId != null) {
-        val embedHtml = """
-            <html>
-              <body style=\"margin:0;background:black;\">
-                <iframe
-                  width=\"100%\"
-                  height=\"100%\"
-                  src=\"https://www.youtube.com/embed/$videoId?start=0&end=15&controls=1&rel=0\"
-                  frameborder=\"0\"
-                  allow=\"autoplay; encrypted-media; picture-in-picture\"
-                  allowfullscreen>
-                </iframe>
-              </body>
-            </html>
-        """.trimIndent()
+    // Constructs a direct search query to YouTube Mobile for the specific exercise.
+    // This bypasses iframe restrictions and gives the user immediate visual results.
+    val searchQuery = Uri.encode("$exerciseName exercise form tutorial")
+    val searchUrl = "https://m.youtube.com/results?search_query=$searchQuery"
 
-        AndroidView(
-            factory = {
-                WebView(context).apply {
-                    settings.javaScriptEnabled = true
-                    settings.mediaPlaybackRequiresUserGesture = false
-                    webViewClient = WebViewClient()
-                    loadDataWithBaseURL("https://www.youtube.com", embedHtml, "text/html", "utf-8", null)
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(220.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color.Black)
-        )
-    } else {
-        AndroidView(
-            factory = {
-                VideoView(context).apply {
-                    setVideoURI(Uri.parse(videoUrl))
-                    val controller = MediaController(context)
-                    controller.setAnchorView(this)
-                    setMediaController(controller)
-                    setOnPreparedListener { player ->
-                        player.isLooping = true
-                        start()
-                    }
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(220.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color.Black)
-        )
-    }
-}
+    AndroidView(
+        factory = {
+            WebView(context).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true // Crucial for modern YouTube mobile layout
+                settings.mediaPlaybackRequiresUserGesture = false
 
-private fun extractYouTubeVideoId(url: String): String? {
-    val watchRegex = "[?&]v=([A-Za-z0-9_-]{11})".toRegex()
-    val shortRegex = "youtu\\.be/([A-Za-z0-9_-]{11})".toRegex()
-    return watchRegex.find(url)?.groupValues?.getOrNull(1)
-        ?: shortRegex.find(url)?.groupValues?.getOrNull(1)
+                // Keep navigation contained within the WebView itself
+                webViewClient = WebViewClient()
+
+                loadUrl(searchUrl)
+            }
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(280.dp) // Taller height to comfortably view search results
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.Black)
+    )
 }
 
 @Composable
@@ -660,19 +623,30 @@ private fun bindCoachCamera(
     mode: CoachMode,
     onPoseUpdate: (LivePoseState) -> Unit,
 ) {
-    val cameraProvider = ProcessCameraProvider.getInstance(context).get()
-    val preview = Preview.Builder().build().also { it.surfaceProvider = previewView.surfaceProvider }
+    val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
 
-    val options = PoseDetectorOptions.Builder().setDetectorMode(PoseDetectorOptions.STREAM_MODE).build()
-    val detector = PoseDetection.getClient(options)
+    cameraProviderFuture.addListener({
+        val cameraProvider = cameraProviderFuture.get()
+        // FIX: Use explicit setSurfaceProvider instead of property access
+        val preview = Preview.Builder().build().also {
+            it.setSurfaceProvider(previewView.surfaceProvider)
+        }
 
-    val repCounter = RepCounter(mode)
-    imageAnalysis.setAnalyzer(ContextCompat.getMainExecutor(context)) { imageProxy ->
-        processPoseFrame(imageProxy, detector, repCounter, onPoseUpdate)
-    }
+        val options = PoseDetectorOptions.Builder().setDetectorMode(PoseDetectorOptions.STREAM_MODE).build()
+        val detector = PoseDetection.getClient(options)
 
-    cameraProvider.unbindAll()
-    cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_FRONT_CAMERA, preview, imageAnalysis)
+        val repCounter = RepCounter(mode)
+        imageAnalysis.setAnalyzer(ContextCompat.getMainExecutor(context)) { imageProxy ->
+            processPoseFrame(imageProxy, detector, repCounter, onPoseUpdate)
+        }
+
+        try {
+            cameraProvider.unbindAll()
+            cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_FRONT_CAMERA, preview, imageAnalysis)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }, ContextCompat.getMainExecutor(context)) // FIX: Run asynchronously on the main executor
 }
 
 private fun processPoseFrame(
