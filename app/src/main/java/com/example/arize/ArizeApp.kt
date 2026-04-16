@@ -84,7 +84,7 @@ fun ArizeApp(
             )
             AppDestinations.FOOD -> FoodPage(profile = profile, modifier = modifier)
             AppDestinations.SOCIAL -> SocialPage(modifier = modifier)
-            AppDestinations.STATS -> StatsPage(modifier = modifier, touchedBodyParts = touchedBodyParts)
+            AppDestinations.STATS -> StatsPage(modifier = modifier, touchedBodyParts = touchedBodyParts, profile = profile)
             AppDestinations.PROFILE -> ProfilePage(
                 profile = profile,
                 modifier = modifier,

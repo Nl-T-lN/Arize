@@ -13,11 +13,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,6 +34,9 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.content.Context
+import androidx.compose.ui.platform.LocalContext
+import java.time.LocalDate
 import kotlin.math.min
 
 private const val BODY_VIEWBOX_WIDTH = 200f
@@ -173,6 +179,209 @@ private fun TopRankCard(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun StatsPage(touchedBodyParts: List<String>, modifier: Modifier = Modifier) {
+    StatsPage(touchedBodyParts = touchedBodyParts, modifier = modifier, profile = UserProfile())
+}
+
+private enum class StatsSection { HUB, CALENDAR, BODY_COVERAGE, CALORIES }
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun StatsPage(touchedBodyParts: List<String>, modifier: Modifier = Modifier, profile: UserProfile) {
+    var activeSectionName by rememberSaveable { mutableStateOf(StatsSection.HUB.name) }
+    val activeSection = StatsSection.valueOf(activeSectionName)
+
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
+    val calendarMap = remember { loadCalendarDataPublic(prefs) }
+    val currentStreak = computeStreak(calendarMap, LocalDate.now())
+    val caloriesToday = remember { mutableStateOf(getCaloriesToday(prefs)) }
+
+    // Refresh calories when returning to hub
+    if (activeSection == StatsSection.HUB) {
+        caloriesToday.value = getCaloriesToday(prefs)
+    }
+
+    when (activeSection) {
+        StatsSection.HUB -> StatsHub(
+            modifier = modifier,
+            currentStreak = currentStreak,
+            caloriesToday = caloriesToday.value,
+            touchedBodyParts = touchedBodyParts,
+            onSectionSelected = { activeSectionName = it.name }
+        )
+        StatsSection.CALENDAR -> StatsDetailWrapper(
+            title = "Workout Calendar",
+            modifier = modifier,
+            onBack = { activeSectionName = StatsSection.HUB.name }
+        ) {
+            FitnessCalendar()
+        }
+        StatsSection.BODY_COVERAGE -> BodyCoverageDetail(
+            touchedBodyParts = touchedBodyParts,
+            modifier = modifier,
+            onBack = { activeSectionName = StatsSection.HUB.name }
+        )
+        StatsSection.CALORIES -> CalorieTrackerDetail(
+            prefs = prefs,
+            modifier = modifier,
+            onBack = { activeSectionName = StatsSection.HUB.name }
+        )
+    }
+}
+
+// ---------- Hub view ----------
+
+@Composable
+private fun StatsHub(
+    modifier: Modifier,
+    currentStreak: Int,
+    caloriesToday: Int,
+    touchedBodyParts: List<String>,
+    onSectionSelected: (StatsSection) -> Unit
+) {
+    val context = LocalContext.current
+    val todayLog = remember { getCalorieLogToday(context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)) }
+    val loggedBodyParts = todayLog.map { it.bodyPart }.filter { it.isNotBlank() }
+    val coverageCount = (touchedBodyParts + loggedBodyParts)
+        .map(::normalizeTouchedGroup)
+        .filter { it != "None" }
+        .distinct()
+        .size
+
+    LazyColumn(
+        modifier = modifier.fillMaxSize().background(AppDark),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Text(
+                "YOUR STATS",
+                color = Color.White,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.ExtraBold
+            )
+            Text("Tap a card to view details", color = MutedText, modifier = Modifier.padding(top = 4.dp))
+        }
+
+        item {
+            StatsHubCard(
+                icon = Icons.Default.CalendarMonth,
+                title = "Workout Calendar",
+                subtitle = if (currentStreak > 0) "🔥 $currentStreak-day streak" else "Start tracking today",
+                accentColor = Color(0xFF60A5FA),
+                onClick = { onSectionSelected(StatsSection.CALENDAR) }
+            )
+        }
+
+        item {
+            StatsHubCard(
+                icon = Icons.Default.FitnessCenter,
+                title = "Body Coverage",
+                subtitle = "$coverageCount muscle groups trained",
+                accentColor = Color(0xFF3B82F6),
+                onClick = { onSectionSelected(StatsSection.BODY_COVERAGE) }
+            )
+        }
+
+        item {
+            StatsHubCard(
+                icon = Icons.Default.LocalFireDepartment,
+                title = "Calorie Tracker",
+                subtitle = "$caloriesToday kcal burned today",
+                accentColor = Color(0xFFF59E0B),
+                onClick = { onSectionSelected(StatsSection.CALORIES) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatsHubCard(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    accentColor: Color,
+    onClick: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = CardDark),
+        shape = RoundedCornerShape(18.dp),
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                color = accentColor.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.size(52.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                    Icon(icon, contentDescription = null, tint = accentColor, modifier = Modifier.size(26.dp))
+                }
+            }
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text(subtitle, color = MutedText, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp))
+            }
+            Text("→", color = accentColor, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+// ---------- Detail wrapper ----------
+
+@Composable
+private fun StatsDetailWrapper(
+    title: String,
+    modifier: Modifier,
+    onBack: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    LazyColumn(
+        modifier = modifier.fillMaxSize().background(AppDark),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    color = Color(0xFF1E293B),
+                    shape = RoundedCornerShape(12.dp),
+                    onClick = onBack,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        Text("←", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(title, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            }
+        }
+        item {
+            content()
+        }
+    }
+}
+
+// ---------- Body Coverage Detail ----------
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun BodyCoverageDetail(
+    touchedBodyParts: List<String>,
+    modifier: Modifier,
+    onBack: () -> Unit
+) {
     val chips = remember {
         listOf(
             MuscleChip("Chest", "Chest"),
@@ -184,10 +393,16 @@ fun StatsPage(touchedBodyParts: List<String>, modifier: Modifier = Modifier) {
             MuscleChip("Butt", "Butt")
         )
     }
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
+    val todayLog = remember { getCalorieLogToday(prefs) }
+    val loggedBodyParts = todayLog.map { it.bodyPart }.filter { it.isNotBlank() }
+    val calendarMap = remember { loadCalendarDataPublic(prefs) }
+    val currentStreak = computeStreak(calendarMap, LocalDate.now())
 
     val selectedMuscles = remember {
         mutableStateListOf<String>().apply {
-            touchedBodyParts
+            (touchedBodyParts + loggedBodyParts)
                 .map(::normalizeTouchedGroup)
                 .filter { it != "None" }
                 .distinct()
@@ -201,8 +416,27 @@ fun StatsPage(touchedBodyParts: List<String>, modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text("Body Coverage", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Text("Tap chips to highlight low-poly muscle groups on front and back.", color = MutedText, modifier = Modifier.padding(top = 6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    color = Color(0xFF1E293B),
+                    shape = RoundedCornerShape(12.dp),
+                    onClick = onBack,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        Text("←", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Text("Body Coverage", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        item {
+            Text("Tap chips to highlight low-poly muscle groups.", color = MutedText)
         }
 
         item {
@@ -211,18 +445,8 @@ fun StatsPage(touchedBodyParts: List<String>, modifier: Modifier = Modifier) {
                     modifier = Modifier.fillMaxWidth().padding(14.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    BodyMapCard(
-                        title = "Front",
-                        facets = frontPolygons,
-                        selectedMuscles = selectedMuscles,
-                        modifier = Modifier.weight(1f)
-                    )
-                    BodyMapCard(
-                        title = "Back",
-                        facets = backPolygons,
-                        selectedMuscles = selectedMuscles,
-                        modifier = Modifier.weight(1f)
-                    )
+                    BodyMapCard(title = "Front", facets = frontPolygons, selectedMuscles = selectedMuscles, modifier = Modifier.weight(1f))
+                    BodyMapCard(title = "Back", facets = backPolygons, selectedMuscles = selectedMuscles, modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -237,36 +461,29 @@ fun StatsPage(touchedBodyParts: List<String>, modifier: Modifier = Modifier) {
                     val selected = selectedMuscles.contains(chip.group)
                     val chipColor by animateColorAsState(
                         targetValue = if (selected) Color(0xFF3B82F6) else Color(0xFF27272A),
-                        animationSpec = tween(durationMillis = 220),
-                        label = "chipColor"
+                        animationSpec = tween(durationMillis = 220), label = "chipColor"
                     )
-
                     val textColor by animateColorAsState(
                         targetValue = if (selected) Color.White else Color(0xFFD4D4D8),
-                        animationSpec = tween(durationMillis = 220),
-                        label = "chipTextColor"
+                        animationSpec = tween(durationMillis = 220), label = "chipTextColor"
                     )
-
                     Surface(
                         color = chipColor,
                         shape = RoundedCornerShape(12.dp),
                         border = BorderStroke(1.dp, if (selected) Color(0xFF60A5FA) else Color(0xFF3F3F46)),
-                        onClick = {
-                            if (selected) selectedMuscles.remove(chip.group) else selectedMuscles.add(chip.group)
-                        }
+                        onClick = { if (selected) selectedMuscles.remove(chip.group) else selectedMuscles.add(chip.group) }
                     ) {
-                        Text(
-                            chip.label,
-                            color = textColor,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        Text(chip.label, color = textColor, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp), fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
         }
 
         item {
+            val workoutsThisWeek = remember(calendarMap) {
+                val today = LocalDate.now()
+                (0L..6L).count { i -> calendarMap[today.minusDays(i).toString()] == WorkoutStatus.COMPLETED }
+            }
             Card(colors = CardDefaults.cardColors(containerColor = CardDark), shape = RoundedCornerShape(16.dp)) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Text("This Week", color = Color.White, fontWeight = FontWeight.SemiBold)
@@ -274,9 +491,134 @@ fun StatsPage(touchedBodyParts: List<String>, modifier: Modifier = Modifier) {
                         modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        MetricPill("Workouts", "5")
-                        MetricPill("Streak", "3 days")
+                        MetricPill("Workouts", workoutsThisWeek.toString())
+                        MetricPill("Streak", if (currentStreak > 0) "$currentStreak days" else "0")
                         MetricPill("Coverage", "${if (chips.isNotEmpty()) (selectedMuscles.size * 100) / chips.size else 0}%")
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------- Calorie Tracker Detail ----------
+
+@Composable
+private fun CalorieTrackerDetail(
+    prefs: android.content.SharedPreferences,
+    modifier: Modifier,
+    onBack: () -> Unit
+) {
+    val today = LocalDate.now()
+    val caloriesToday = getCaloriesToday(prefs)
+    val todayLog = remember { getCalorieLogToday(prefs) }
+    val last7Days = remember {
+        (6 downTo 0).map { i ->
+            val d = today.minusDays(i.toLong())
+            d to getCaloriesForDate(prefs, d)
+        }
+    }
+    val maxCal = (last7Days.maxOfOrNull { it.second } ?: 1).coerceAtLeast(1)
+
+    LazyColumn(
+        modifier = modifier.fillMaxSize().background(AppDark),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    color = Color(0xFF1E293B), shape = RoundedCornerShape(12.dp),
+                    onClick = onBack, modifier = Modifier.size(40.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        Text("←", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Text("Calorie Tracker", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        // Big calorie display
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = CardDark), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("🔥", fontSize = 40.sp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("$caloriesToday", color = Color(0xFFF59E0B), fontSize = 56.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("kcal burned today", color = MutedText, fontSize = 14.sp)
+                }
+            }
+        }
+
+        // 7-day bar chart
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = CardDark), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text("Last 7 Days", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().height(120.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.Bottom
+                    ) {
+                        last7Days.forEach { (date, cals) ->
+                            val isToday = date == today
+                            val barColor = if (isToday) Color(0xFFF59E0B) else Color(0xFF3B82F6)
+                            val ratio = if (maxCal > 0) (cals.toFloat() / maxCal) else 0f
+
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
+                                Text(if (cals > 0) "$cals" else "", color = MutedText, fontSize = 9.sp)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .width(24.dp)
+                                        .height((ratio * 80).dp.coerceAtLeast(4.dp))
+                                        .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
+                                        .background(barColor)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    date.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.getDefault()).take(2),
+                                    color = if (isToday) Color.White else MutedText,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Today's exercise log
+        if (todayLog.isNotEmpty()) {
+            item {
+                Text("Today's Breakdown", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            }
+            items(todayLog.size) { index ->
+                val entry = todayLog[index]
+                Card(colors = CardDefaults.cardColors(containerColor = CardDark), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                    Row(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Surface(color = Color(0xFFF59E0B).copy(alpha = 0.15f), shape = RoundedCornerShape(10.dp), modifier = Modifier.size(40.dp)) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) { Text("💪", fontSize = 18.sp) }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(entry.exerciseName, color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text(entry.bodyPart, color = MutedText, fontSize = 12.sp)
+                        }
+                        Text("${entry.calories} kcal", color = Color(0xFFF59E0B), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        } else {
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = CardDark), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("No exercises logged today", color = MutedText)
+                        Text("Complete a workout to see calorie data here!", color = MutedText, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
                     }
                 }
             }

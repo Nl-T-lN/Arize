@@ -38,6 +38,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowOutward
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
@@ -142,6 +143,11 @@ fun GymPage(
     var selectedExercise by remember { mutableStateOf<Exercise?>(null) }
     var activeCoachExercise by remember { mutableStateOf<Exercise?>(null) }
     val completedExercises = remember { mutableStateListOf<String>() }
+    var isSearching by rememberSaveable { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+
+    val context = LocalContext.current
+    val caloriePrefs = remember { context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE) }
 
     if (activeCoachExercise != null) {
         LiveWorkoutCoachFullscreen(
@@ -149,17 +155,34 @@ fun GymPage(
             modifier = modifier,
             onBack = { activeCoachExercise = null },
             onTargetComplete = {
-                val title = activeCoachExercise!!.title
-                if (!completedExercises.contains(title)) {
-                    completedExercises.add(title)
+                val ex = activeCoachExercise!!
+                if (!completedExercises.contains(ex.title)) {
+                    completedExercises.add(ex.title)
                 }
+                // Calculate and persist calories burned
+                val cals = calculateCalories(
+                    weightKg = profile.currentWeightKg.toDouble(),
+                    durationMin = estimateDuration(ex.sets, ex.reps),
+                    met = getMetForBodyPart(ex.bodyPart)
+                )
+                addCaloriesToday(caloriePrefs, cals, ex.title, ex.bodyPart)
+
+                // Sync with calendar
+                val todayKey = java.time.LocalDate.now().toString()
+                val calMap = loadCalendarDataPublic(caloriePrefs).toMutableMap()
+                calMap[todayKey] = WorkoutStatus.COMPLETED
+                saveCalendarDataPublic(caloriePrefs, calMap)
+
                 activeCoachExercise = null
             }
         )
         return
     }
 
-    val visibleExercises = allExercises.filter { selectedPart == "All" || it.bodyPart == selectedPart }
+    val visibleExercises = allExercises.filter { exercise ->
+        (selectedPart == "All" || exercise.bodyPart == selectedPart) &&
+        (searchQuery.isBlank() || exercise.title.contains(searchQuery, ignoreCase = true))
+    }
 
     Box(modifier = modifier.fillMaxSize().background(AppDark)) {
         LazyColumn(
@@ -172,8 +195,43 @@ fun GymPage(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("EXERCISES", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
-                    Icon(Icons.Default.Search, contentDescription = null, tint = Color.White)
+                    if (isSearching) {
+                        androidx.compose.material3.OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("Search exercises...", color = MutedText) },
+                            singleLine = true,
+                            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = AccentBlue,
+                                unfocusedBorderColor = Color(0xFF2D3342)
+                            ),
+                            trailingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close Search",
+                                    tint = MutedText,
+                                    modifier = Modifier.clickable {
+                                        isSearching = false
+                                        searchQuery = ""
+                                    }
+                                )
+                            }
+                        )
+                    } else {
+                        Text("EXERCISES", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
+                        Icon(
+                            Icons.Default.Search, 
+                            contentDescription = "Open Search", 
+                            tint = Color.White,
+                            modifier = Modifier.clickable { 
+                                isSearching = true 
+                                selectedTab = GymTab.EXERCISES 
+                            }
+                        )
+                    }
                 }
                 Spacer(modifier = Modifier.height(10.dp))
                 GymTopTabs(selected = selectedTab, onSelect = { selectedTab = it })
