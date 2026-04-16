@@ -1,6 +1,5 @@
 # Arize - Your Personalized Gym Companion
-
-Arize is a modern, Jetpack Compose-based Android application designed to help you manage your fitness journey. Whether you're tracking your gym sessions, monitoring your diet, or staying connected with a fitness community, Arize has you covered.
+Arize is a modern, Jetpack Compose-based Android application designed to help you manage your fitness journey. Whether you're tracking your gym sessions, monitoring your diet, or staying connected with a fitness community.
 
 ## Features
 
